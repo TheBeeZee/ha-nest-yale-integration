@@ -217,7 +217,7 @@ class NestYaleEntity(CoordinatorEntity):
             return
         try:
             device_registry = dr.async_get(self.hass)
-            device = device_registry.async_get_device(identifiers={(DOMAIN, self._device_id)})
+            device = self._async_find_registry_device(device_registry, self._device_id)
             if not device:
                 self._device_registry_update_pending = True
                 return
@@ -312,6 +312,28 @@ class NestYaleEntity(CoordinatorEntity):
             self._attr_device_info["manufacturer"] = new_manufacturer
         if new_model:
             self._attr_device_info["model"] = new_model
+
+    def _registry_config_entry_id(self):
+        platform = getattr(self, "platform", None)
+        config_entry = getattr(platform, "config_entry", None)
+        return getattr(config_entry, "entry_id", None)
+
+    def _async_find_registry_device(self, device_registry, identifier):
+        """Look up a device by identifier without the deprecated async_get_device.
+
+        HA 2026.8 added async_get_device_by_identifier and 2026.9 deprecated
+        async_get_device (removal in 2027.8); older releases only have the latter.
+        """
+        identifier_tuple = (DOMAIN, identifier)
+        if hasattr(device_registry, "async_get_device_by_identifier"):
+            config_entry_id = self._registry_config_entry_id()
+            if config_entry_id:
+                return device_registry.async_get_device_by_identifier(
+                    identifier_tuple, config_entry_id
+                )
+            devices = device_registry.async_get_devices(identifiers={identifier_tuple})
+            return devices[0] if devices else None
+        return device_registry.async_get_device(identifiers={identifier_tuple})
 
     def _build_device_registry_updates(
         self,
@@ -412,10 +434,10 @@ class NestYaleEntity(CoordinatorEntity):
                          self._attr_unique_id, self._device_id, new_serial)
             
             # Find device by checking both device_id and serial number
-            device = device_registry.async_get_device(identifiers={(DOMAIN, self._device_id)})
+            device = self._async_find_registry_device(device_registry, self._device_id)
             if not device and new_serial:
                 _LOGGER.debug("Device not found by device_id, trying serial number")
-                device = device_registry.async_get_device(identifiers={(DOMAIN, new_serial)})
+                device = self._async_find_registry_device(device_registry, new_serial)
             
             if device:
                 _LOGGER.debug("Found device in registry: id=%s, identifiers=%s, sw_version=%s", 

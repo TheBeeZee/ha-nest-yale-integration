@@ -254,6 +254,47 @@ class TestNestYaleEntity(unittest.TestCase):
         self.assertFalse(_has_defined_value({"last_action": None}, "last_action"))
         self.assertFalse(_has_defined_value({}, "last_action"))
 
+    def test_find_registry_device_uses_config_entry_scoped_lookup(self):
+        _, entity = self._make_entity()
+        device = SimpleNamespace(id="registry-device")
+        calls = []
+
+        class ScopedRegistry:
+            def async_get_device_by_identifier(self, identifier, config_entry_id):
+                calls.append((identifier, config_entry_id))
+                return device
+
+            def async_get_device(self, **kwargs):
+                raise AssertionError("deprecated async_get_device called")
+
+        entity.platform = SimpleNamespace(config_entry=SimpleNamespace(entry_id="ENTRY_1"))
+
+        self.assertIs(device, entity._async_find_registry_device(ScopedRegistry(), "DEVICE_1"))
+        self.assertEqual([((DOMAIN, "DEVICE_1"), "ENTRY_1")], calls)
+
+    def test_find_registry_device_without_config_entry_uses_async_get_devices(self):
+        _, entity = self._make_entity()
+        device = SimpleNamespace(id="registry-device")
+
+        class ScopedRegistry:
+            def async_get_device_by_identifier(self, identifier, config_entry_id):
+                raise AssertionError("no config entry id available")
+
+            def async_get_devices(self, *, identifiers):
+                return [device] if identifiers == {(DOMAIN, "DEVICE_1")} else []
+
+            def async_get_device(self, **kwargs):
+                raise AssertionError("deprecated async_get_device called")
+
+        self.assertIs(device, entity._async_find_registry_device(ScopedRegistry(), "DEVICE_1"))
+        self.assertIsNone(entity._async_find_registry_device(ScopedRegistry(), "OTHER"))
+
+    def test_find_registry_device_falls_back_on_older_home_assistant(self):
+        _, entity = self._make_entity()
+        device = SimpleNamespace(id="registry-device")
+
+        self.assertIs(device, entity._async_find_registry_device(FakeDeviceRegistry(device), "DEVICE_1"))
+
 
 if __name__ == "__main__":
     unittest.main()
